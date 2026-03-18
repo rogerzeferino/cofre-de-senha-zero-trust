@@ -57,7 +57,7 @@ services:
     restart: always
     environment:
       - WEBSOCKET_ENABLED=true
-      - ADMIN_TOKEN=qbgjRsLKrd26xua5B+s6dUF9r5FIQnVJpoNXNG/rkoc+3JDHPZfK6DJlQLI6G+uH
+      - ADMIN_TOKEN=CHAVE AQUI
       - SIGNUPS_ALLOWED=true # Deixamos 'true' só para você conseguir criar sua conta inicial
     volumes:
       - ./vw-data:/data
