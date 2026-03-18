@@ -1,0 +1,162 @@
+1. Título e Objetivo do Projeto 
+Título do Projeto
+Implantação de Servidor de Cofre de Senhas Corporativo com Vaultwarden, Docker e Tailscale
+Objetivo do Projeto
+O objetivo deste projeto é estabelecer uma solução robusta e segura para a gestão de credenciais corporativas, utilizando o Vaultwarden uma implementação de código aberto do Bitwarden) em contêineres Docker, hospedado em um servidor Ubuntu Server 22.04 LTS. A segurança de acesso será garantida por uma rede Zero Trust implementada com Tailscale, proporcionando acesso seguro via HTTPS de qualquer local, sem a necessidade de VPNs tradicionais ou exposição de portas na internet. 
+Esta solução visa:
+●	Centralizar o armazenamento de senhas e informações sensíveis.
+●	Aumentar a segurança das credenciais da empresa.
+●	Facilitar o compartilhamento seguro de senhas entre equipes (ex: Departamento Pessoal).
+●	Fornecer rastreabilidade e auditoria sobre o acesso às credenciais.
+●	Reduzir o risco de vazamento de dados por senhas fracas ou reutilizadas.
+
+2. Requisitos de Infraestrutura
+Para a implantação deste servidor de cofre de senhas, os seguintes requisitos de infraestrutura são mandatórios:
+Hardware
+●	Tipo: Servidor Linux (Preferencial Ubuntu) – Foi utilizado um Optiplex 7020 Mini NVME 256GB 32GB (BareMetal) para os testes interno.
+●	Processador: Mínimo 2 Cores (Intel/AMD)
+●	Memória RAM: Mínimo 32 GB (para suportar o Vaultwarden e futuras expansões de serviços)
+●	Armazenamento: Mínimo 250 GB SSD (para performance e durabilidade)
+●	Conectividade de Rede: Placa de rede Ethernet Gigabit
+Sistema Operacional
+●	Distribuição: Ubuntu Server 22.04 LTS
+●	Tipo de Instalação: Mínima (sem interface gráfica)
+
+3. Fase 1: Instalação e Preparação do Sistema Operacional
+Esta fase detalha a instalação do sistema operacional base e a configuração inicial para hospedar o ambiente Docker.
+3.1. Dicas de Instalação do Ubuntu Server 22.04 LTS
+Durante o processo de instalação do Ubuntu Server, atente-se aos seguintes pontos:
+●	OpenSSH Server: Na etapa de seleção de pacotes ou "Featured Server Snaps", certifique-se de marcar a opção para instalar o OpenSSH server.
+●	IP Fixo: Embora não seja estritamente necessário para o funcionamento do Tailscale, configurar um IP estático na rede local durante a instalação (na seção "Network connections") pode facilitar o gerenciamento inicial do servidor.
+3.2. Comandos de Atualização do Sistema e Instalação do Docker
+Após a instalação do Ubuntu Server e o primeiro acesso (preferencialmente via SSH), execute os seguintes comandos para preparar o ambiente:
+1.	Atualizar o Sistema Operacional
+2.	Instalar Docker e Docker Compose: Instala o motor Docker e a ferramenta Docker Compose (versão v2, que é integrada ao comando docker). sudo apt install docker.io docker-compose-v2 -y
+3.	Adicionar Usuário ao Grupo Docker: Para evitar a necessidade de usar sudo antes de cada comando docker, adicione o usuário atual ao grupo docker. sudo usermod -aG docker $USER  
+4.	Nota: Após executar este comando, é necessário sair e reconectar à sessão SSH (ou reiniciar o servidor) para que a alteração de grupo tenha efeito.
+
+4. Fase 2: Implantação do Vaultwarden
+Nesta fase, o contêiner do Vaultwarden será configurado e iniciado utilizando Docker Compose.
+4.1. Criação da Estrutura de Diretórios
+Crie um diretório dedicado para o Vaultwarden e navegue até ele. Este diretório armazenará o arquivo docker-compose.yml e os dados persistentes do cofre.
+bash mkdir ~/vaultwarden && cd ~/vaultwarden
+       4.2. Geração do Token de Admin.
+ Um token de administração é essencial para acessar o painel de gerenciamento do Vaultwarden, onde é possível gerenciar usuários, configurações e logs. Gere um token forte com o comando abaixo:  “bash openssl rand -base64 48”
+●	Atenção: Copie a hash alfanumérica gerada. Ela será utilizada no arquivo docker-compose.yml.
+4.3. Criação do Arquivo docker-compose.yml
+Crie o arquivo de configuração do Docker Compose. Este arquivo define como o contêiner do Vaultwarden será executado.
+nano docker-compose.yml
+Cole o conteúdo abaixo, substituindo SEU_TOKEN_ADMIN_AQUI pela hash gerada no passo anterior e https://homolog.tail59374d.ts.net pelo seu domínio Tailscale (que será obtido na Fase 3).
+
+version: '3.8'
+
+services:
+  vaultwarden:
+    image: vaultwarden/server:latest
+    container_name: vaultwarden
+    restart: always
+    environment:
+      - WEBSOCKET_ENABLED=true
+      - ADMIN_TOKEN=qbgjRsLKrd26xua5B+s6dUF9r5FIQnVJpoNXNG/rkoc+3JDHPZfK6DJlQLI6G+uH
+      - SIGNUPS_ALLOWED=true # Deixamos 'true' só para você conseguir criar sua conta inicial
+    volumes:
+      - ./vw-data:/data
+    ports:
+      - 8080:80
+
+volumes:
+  vw-data:
+
+●	Explicação das Variáveis de Ambiente:  WEBSOCKET_ENABLED=true: Essencial para a sincronização em tempo real dos clientes Bitwarden.
+●	ADMIN_TOKEN: O token gerado para acesso ao painel de administração (/admin).
+●	SIGNUPS_ALLOWED=false: Desabilita o registro público de novos usuários, garantindo que apenas administradores possam convidar.
+●	DOMAIN: Define o domínio base do servidor, crucial para que os links de convite e e-mails sejam gerados corretamente. (Exemplo: - DOMAIN=https://homolog.tail59374d.ts.net/)
+●	EXTENDED_LOGGING=true: Ativa logs mais detalhados, úteis para auditoria e integração com SIEM.
+●	volumes: - ./vw-data:/data: Mapeia o diretório local vw-data para o diretório /data dentro do contêiner, garantindo a persistência dos dados do cofre mesmo se o contêiner for recriado.
+●	ports: - 8080:80: Mapeia a porta 8080 do host para a porta 80 do contêiner, onde o Vaultwarden está escutando.
+4.4. Subida do Contêiner
+Inicie o contêiner do Vaultwarden em segundo plano (-d dedetached).
+docker compose up -d
+Verifique se o contêiner está em execução:
+docker ps
+A saída deve mostrar o contêiner vaultwarden com status Up.
+
+5. Fase 3: Configuração da Rede Zero Trust e HTTPS com Tailscale
+Esta fase detalha a instalação e configuração do Tailscale para fornecer acesso seguro via HTTPS ao Vaultwarden, utilizando uma rede Zero Trust.
+5.1. Correção de Relógio/NTP (Crítico para apt)
+Um relógio desajustado no servidor pode causar erros como E: Release file ... is not valid yet durante as atualizações do apt, impedindo a instalação de pacotes.
+5.	Desativar sincronização NTP automática (se estiver com problemas): sudo timedatectl set-ntp false
+6.	Sincronizar a hora com um servidor externo (Google NTP): sudo date -s "$(curl -s --head http://google.com | grep -i '^date:' | sed 's/^[Dd]ate: //g')"  Verifique a hora com date para confirmar o ajuste.
+7.	Ajustar o fuso horário para o local (ex: São Paulo): sudo timedatectl set-timezone America/Sao_Paulo
+8.	Limpar e atualizar o cache do apt: sudo apt-get clean sudo rm -rf /var/lib/apt/lists/* sudo apt-get update
+5.2. Instalação do Tailscale via Script Oficial
+Execute o script oficial para instalar o Tailscale no Ubuntu Server:
+curl -fsSL https://tailscale.com/install.sh | sh
+5.3. Autenticação da Máquina e Configuração do MagicDNS + HTTPS
+9.	Iniciar e Autenticar o Tailscale: “sudo tailscale up”.  O comando irá gerar um link de autenticação. Copie este link e cole-o no navegador do seu computador principal. Faça login com a conta Google/Microsoft/Github que você deseja usar para gerenciar sua Tailnet.
+10.	Configurar MagicDNS e HTTPS no Painel Web: Após autenticar a máquina, acesse o painel de administração do Tailscale no seu navegador: 👉 https://login.tailscale.com/admin/dns  Na aba DNS, certifique-se de que MagicDNS está ativado.
+11.	Na seção HTTPS Certificates, clique em Enable HTTPS.
+5.4. Criação do Túnel Reverso HTTPS
+No terminal do servidor Ubuntu, configure o Tailscale para atuar como um proxy reverso, direcionando o tráfego HTTPS para a porta 8080 do Vaultwarden.
+sudo tailscale serve --bg http://127.0.0.1:8080
+Para obter a URL segura gerada pelo Tailscale para o seu servidor:
+tailscale serve status
+A saída mostrará a URL no formato https://homolog.tailnet-xxxx.ts.net. Esta é a URL que você usará para acessar o Vaultwarden.
+5.5. Instalação do Cliente Tailscale na Máquina do Administrador
+Para acessar o Vaultwarden via a URL segura (.ts.net), o seu computador principal (administrador) também precisa estar conectado à mesma Tailnet.
+12.	Baixe o Cliente Tailscale: Acesse https://tailscale.com/download no seu computador principal (Windows, macOS, Linux).
+13.	Instale e Faça Login: Instale o aplicativo e faça login utilizando a mesma conta que você usou para autenticar o servidor Ubuntu.
+Após a instalação e login, o seu computador principal e o servidor Ubuntu estarão na mesma rede Zero Trust, permitindo o acesso ao Vaultwarden via HTTPS.
+
+6. Fase 4: Configuração de SMTP para Envio de Convites
+Para que o Vaultwarden possa enviar e-mails de convite para novos usuários, é necessário configurar um servidor SMTP.
+6.1. Acesso ao Painel de Administração do Vaultwarden
+14.	Acesse o painel de administração do seu Vaultwarden: 👉 https://homolog.tail59374d.ts.net/admin (substitua pelo seu domínio Tailscale).
+15.	Insira o ADMIN_TOKEN gerado na Fase 2.
+6.2. Configuração do Servidor SMTP (Exemplo: Gmail com Senha de Aplicativo)
+Para usar um serviço de e-mail como o Gmail, que possui autenticação em duas etapas (2FA), é necessário gerar uma "Senha de Aplicativo" específica.
+16.	Gerar Senha de Aplicativo no Gmail:  Acesse https://myaccount.google.com/apppasswords (certifique-se de que o 2FA está ativado na sua conta Google).
+17.	Em "Selecionar app", escolha E-mail.
+18.	Em "Selecionar dispositivo", escolha Outro (nome personalizado) e digite Vaultwarden Corporativo.
+19.	Clique em Gerar. O Google fornecerá uma senha de 16 caracteres. Copie esta senha sem os espaços.
+20.	Configurar no Vaultwarden: No painel de administração do Vaultwarden (/admin), navegue até SMTP Email Settings e preencha os campos:  Enabled: [Marcar]
+21.	Host: smtp.gmail.com
+22.	Enable SSL/TLS: [Marcar] (Force TLS)
+23.	Port: 587
+24.	From Address: seu-email-de-envio@gmail.com
+25.	From Name: Cofre de Senhas TI
+26.	Username: seu-email-de-envio@gmail.com
+27.	Password: [Cole a senha de 16 caracteres gerada pelo Google AQUI]
+28.	SMTP Security: STARTTLS
+29.	Testar Envio: Clique em Save e, em seguida, em Send test email para verificar se a configuração está correta. Um e-mail de teste será enviado para o endereço configurado em "From Address".
+
+7. Fase 5: Estruturação do Cofre Corporativo (Política de "Cofre Pessoal Zero")
+Esta fase descreve as melhores práticas para organizar o cofre e gerenciar usuários, seguindo uma política de segurança robusta.
+7.1. Desativação de "Allow new signups" para Segurança
+Para garantir que apenas a equipe de TI possa convidar novos usuários, desative o registro público:
+30.	Acesse o painel de administração do Vaultwarden (/admin).
+31.	No menu lateral, clique em General settings.
+32.	Localize a opção Allow new signups e desmarque a caixa.
+33.	Role até o final da página e clique em Save.
+7.2. Criação de Organizações e Coleções
+A estrutura de Organizações e Coleções é fundamental para o compartilhamento seguro e segmentado de senhas.
+34.	Crie sua Conta Master: Na tela de login do Vaultwarden, crie a primeira conta com um e-mail da TI. Esta será a conta "Owner" do sistema.
+35.	Crie a Organização:  Logado na sua conta master, navegue até a aba Organizações.
+36.	Clique em Nova Organização (ex: [Nome da Sua Empresa]).
+37.	Crie Coleções para Departamentos/Funções: Dentro da Organização recém-criada, crie Coleções para agrupar senhas por departamento ou função.  Exemplo: Departamento Pessoal - Acessos Comuns
+38.	Departamento Pessoal - Acessos Restritos
+39.	Financeiro - Contas Bancárias
+40.	TI - Servidores
+7.3. Convites de Usuários e Fluxo de Onboarding Corporativo
+41.	Convite de Usuários:  Na sua conta master, dentro da Organização, vá na aba Membros.
+42.	Clique em Convidar Usuário e insira o e-mail corporativo de cada colaborador (ex: maria.silva@empresa.com.br).
+43.	Atribua-os às Coleções apropriadas.
+44.	Política de "Cofre Pessoal Zero":  Instrução: Todos os colaboradores devem ser instruídos a NUNCA salvar senhas corporativas em seu "Meu Cofre" (o espaço pessoal). Todas as credenciais da empresa devem ser salvas e acessadas exclusivamente através das Coleções da Organização.
+45.	Recuperação de Senha Mestre: Se um usuário esquecer sua senha mestre, o conteúdo de seu "Meu Cofre" será irrecuperável. No entanto, como as senhas corporativas estão nas Coleções da Organização, a TI pode simplesmente remover o usuário, reenviar um convite e adicioná-lo novamente às Coleções, sem perda de dados corporativos.
+46.	Desligamento de Colaborador: Em caso de desligamento, basta remover o usuário da Organização através do painel de administração. O acesso a todas as senhas corporativas será revogado instantaneamente.
+7.4. Auditoria e Logs
+O Vaultwarden oferece recursos de auditoria essenciais para conformidade e segurança:
+●	Event Logs da Organização:  Dentro da sua conta master, na Organização, a aba Event Logs registra todas as ações dos usuários: acesso a senhas, edições, exportações, etc.
+●	Exemplo de log: Usuário 'Maria Silva' visualizou o item 'Sistema Folha de Pagamento' na coleção 'DP - Acessos Comuns' em 03/03/2026 às 10:30.
+●	Logs do Servidor (Docker):  Com a variável de ambiente EXTENDED_LOGGING=true configurada, o Vaultwarden gera logs detalhados no diretório /data do contêiner (mapeado para ~/vaultwarden/vw-data no host).
+●	Estes logs podem ser integrados a um sistema SIEM (Security Information and Event Management) como Wazuh ou Splunk para monitoramento proativo e alertas sobre atividades suspeitas (ex: tentativas de login falhas, acessos de IPs incomuns).
